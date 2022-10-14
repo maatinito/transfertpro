@@ -9,10 +9,15 @@ Gem::Specification.new do |spec|
   spec.email = ["clpublic@free.fr"]
 
   spec.summary = "Gem to access files stored in TransfertPro cloud provider"
-  spec.description = "This gem allows basic file operations on TransfertPro and is not intended to mimic all the possibilities under the TransfertPro API"
+  spec.description = <<~DOC
+    This gem allows basic file operations on TransfertPro;
+    TransfertPro REST API is very close to their implementation (shared id, no path, ...)
+    This API tries to implement higher level of functionalities to be able to send/receive files
+    using simple file system concepts likepath, wildcards (*.txt).
+  DOC
   spec.homepage = "https://www.githib.com/maatinito/transfertpro/README.MD"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.0.3"
+  spec.required_ruby_version = ">= 3.1.2"
 
   # spec.metadata["allowed_push_host"] = "TODO: Set to your gem server 'https://example.com'"
 
@@ -36,4 +41,5 @@ Gem::Specification.new do |spec|
 
   # For more information and examples about making a new gem, checkout our
   # guide at: https://bundler.io/guides/creating_gem.html
+  spec.metadata["rubygems_mfa_required"] = "true"
 end

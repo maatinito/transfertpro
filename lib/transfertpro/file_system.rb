@@ -1,9 +1,11 @@
-require_relative 'base'
-require 'securerandom'
+# frozen_string_literal: true
+
+require_relative "base"
+require "securerandom"
 
 module Transfertpro
+  # class to use to upload and download files to Transfertpro file system
   class FileSystem < Base
-
     CHUNK_SIZE = 8 * 1024 * 1024
 
     # upload local files to a TP shared directory
@@ -13,7 +15,7 @@ module Transfertpro
     # @example upload_shared_files('./source', '*.txt', 'my_project/text')
     def upload_shared_files(source_directory, pattern, target_directory)
       tp_target_dir = find_shared_dir(target_directory)
-      Dir.glob(source_directory + '/' + pattern).each do |filepath|
+      Dir.glob("#{source_directory}/#{pattern}").each do |filepath|
         upload_shared_file(filepath, tp_target_dir)
       end
     end
@@ -23,9 +25,11 @@ module Transfertpro
     # @param target_directory String target path on TransfertPro. Must be relative to 'Espace collaboratif'
     # @example: upload_shared_file('./source/file.txt', 'my_project/text')
     def upload_shared_file(input_file_path, target_directory)
-      target_directory = find_shared_dir(target_directory.to_s) unless target_directory.is_a?(Hash) && !target_directory['DirectoryId'].nil?
+      unless target_directory.is_a?(Hash) && !target_directory["DirectoryId"].nil?
+        target_directory = find_shared_dir(target_directory.to_s)
+      end
       file_description = file_description(input_file_path, target_directory)
-      share_id = target_directory['CurrentSharedDirectoryId']
+      share_id = target_directory["CurrentSharedDirectoryId"]
       upload_file_description(file_description, share_id)
       upload_content(input_file_path, file_description, share_id)
     end
@@ -37,7 +41,7 @@ module Transfertpro
     # @example download_shared_files('my_project/text', '*.txt', './target')
     def download_shared_files(source_directory, pattern, target_directory)
       tp_dir = find_shared_dir(source_directory)
-      tp_files = tp_dir['Files']['$values'].filter { |file| File.fnmatch(pattern, file['FileName']) }
+      tp_files = tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }
       tp_files.map do |tp_file|
         download_file(target_directory, tp_dir, tp_file)
       end
@@ -51,8 +55,9 @@ module Transfertpro
       directory = File.dirname(input_file_path)
       tp_dir = find_shared_dir(directory)
       filename = File.basename(input_file_path)
-      tp_file = tp_dir['Files']['$values'].find { |file| filename == file['FileName'] }
-      raise Error.new("Unable to find #{filename} in shared directory #{directory}") if tp_file.nil?
+      tp_file = tp_dir["Files"]["$values"].find { |file| filename == file["FileName"] }
+      raise Error, "Unable to find #{filename} in shared directory #{directory}" if tp_file.nil?
+
       download_file(target_directory, tp_dir, tp_file)
     end
 
@@ -61,13 +66,13 @@ module Transfertpro
     # @param pattern String file pattern to match for
     # @example list_shared_files('my_project/text', '*.txt')
     # @return Array<String> file paths relative to shared root
-    def list_shared_files(directory, pattern = '*')
+    def list_shared_files(directory, pattern = "*")
       names = path_names(directory)
       root = names.shift
       tp_dir = find_shared_root(root)
       tp_dir = find_dir(tp_dir, names) unless names.empty?
-      files = tp_dir['Files']['$values'].filter { |file| File.fnmatch(pattern, file['FileName']) }
-      return files, tp_dir
+      files = tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }
+      [files, tp_dir]
     end
 
     private
@@ -79,12 +84,12 @@ module Transfertpro
       find_dir(tp_dir, names) unless names.empty?
     end
 
-    def raw_root()
-      http_get('/api/v5/Directory/Root')
+    def raw_root
+      http_get("/api/v5/Directory/Root")
     end
 
-    def raw_root_directory()
-      http_get('/api/v5/Directory/RootDirectory')
+    def raw_root_directory
+      http_get("/api/v5/Directory/RootDirectory")
     end
 
     def raw_lsr(directory_id, depth)
@@ -96,9 +101,9 @@ module Transfertpro
     end
 
     def refresh
-      @roots_directories = raw_root['Directories']['$values']
-      share_root_id = @roots_directories.find { |d| d["DirectoryName"] == ':Share' }['DirectoryId']
-      @shared_directories = raw_ls(share_root_id)['Directories']['$values']
+      @roots_directories = raw_root["Directories"]["$values"]
+      share_root_id = @roots_directories.find { |d| d["DirectoryName"] == ":Share" }["DirectoryId"]
+      @shared_directories = raw_ls(share_root_id)["Directories"]["$values"]
     end
 
     def file_description(input_file_path, tp_dir)
@@ -106,11 +111,9 @@ module Transfertpro
         UploadId: SecureRandom.uuid,
         FileName: File.basename(input_file_path),
         FileSize: File.size(input_file_path),
-        DirectoryId: tp_dir['DirectoryId']
+        DirectoryId: tp_dir["DirectoryId"]
       }
     end
-
-    private
 
     def upload_content(input_file_path, file_description, share_id)
       if File.size(input_file_path) < CHUNK_SIZE
@@ -121,57 +124,69 @@ module Transfertpro
     end
 
     def direct_upload(input_file_path, file_description, share_id)
-      file = File.open(input_file_path, 'rb')
-      upload_chunk(file_description, share_id, 0, 1, 0, file)
+      file = File.open(input_file_path, "rb")
+      params = chunk_params(chunk, chunk_count, file_description, offset, share_id)
+      upload_chunk(params, file)
     end
 
     def chunked_upload(input_file_path, file_description, share_id)
-      file = File.open(input_file_path, 'rb')
+      file = File.open(input_file_path, "rb")
       extension = File.extname(input_file_path)
       chunk_index = 0
-      chunk_count = (File.size(input_file_path) * 1.0 / CHUNK_SIZE).ceil
+      chunk_count = chunk_count(input_file_path)
       offset = 0
-      begin
-        Tempfile.create(['tp', extension]) do |chunk_file|
-          chunk = file.read(CHUNK_SIZE)
-          chunk_file.write(chunk)
-          chunk_file.rewind
-          upload_chunk(file_description, share_id, chunk_index, chunk_count, offset, chunk_file)
+      loop do
+        Tempfile.create(["tp", extension]) do |chunk_file|
+          chunk = create_chunk(chunk_file, file)
+          params = chunk_params(chunk, chunk_count, file_description, offset, share_id)
+          upload_chunk(params, chunk_file)
           offset += chunk.size
           chunk_index += 1
         end
-      end while chunk_index < chunk_count
+        break if chunk_index >= chunk_count
+      end
     end
 
-    def upload_chunk(file_description, share_id, chunk, chunk_count, offset, file)
-      params = chunk_params(chunk, chunk_count, file_description, offset, share_id)
-      body = { file: file }
+    def chunk_count(input_file_path)
+      (File.size(input_file_path) * 1.0 / CHUNK_SIZE).ceil
+    end
+
+    def create_chunk(chunk_file, file)
+      chunk = file.read(CHUNK_SIZE)
+      chunk_file.write(chunk)
+      chunk_file.rewind
+      chunk
+    end
+
+    def upload_chunk(params, file)
+      body = { file: }
       tries = 0
       r = nil
       while tries < 10
-        r = Typhoeus.post(@upload_url + "/Chunk", body: body, params: params, headers: headers, verbose: true)
+        r = Typhoeus.post("#{@upload_url}/Chunk", body:, params:, headers:, verbose: false)
         return if r.success?
         raise Error.new("Exception during upload #{r.code} #{r.body}", r) unless r.nil? || r.success?
+
         tries += 1
       end
-      raise Error.new("Network error during upload")
+      raise Error, "Network error during upload"
     end
 
     def chunk_params(chunk, chunk_count, file_description, offset, share_id)
-      params = {
+      {
         uid: file_description[:UploadId],
         name: file_description[:FileName],
-        chunk: chunk,
+        chunk:,
         chunks: chunk_count,
         share: share_id,
-        offset: offset,
+        offset:,
         o: true,
         sender: @user
       }.merge(authentication_parameters)
     end
 
     def path_names(directory)
-      directory.split('/').filter { |name| !name.empty? }
+      directory.split("/").filter { |name| !name.empty? }
     end
 
     def upload_file_description(file_description, share_id)
@@ -185,22 +200,26 @@ module Transfertpro
     end
 
     def download_file(target_directory, tp_dir, tp_file)
-      puts tp_file['FileName']
-      target_file = target_directory + '/' + tp_file['FileName']
-      out_stream = File.open target_file, 'wb'
+      puts tp_file["FileName"]
+      target_file = "#{target_directory}/#{tp_file["FileName"]}"
+      out_stream = File.open target_file, "wb"
       params = {
-        i: tp_file['Id'],
-        n: tp_file['FileName'],
-        s: tp_dir['CurrentSharedDirectoryId']
+        i: tp_file["Id"],
+        n: tp_file["FileName"],
+        s: tp_dir["CurrentSharedDirectoryId"]
       }.merge(authentication_parameters)
       run_download_request(out_stream, params)
       target_file
     end
 
     def run_download_request(outstream, params)
-      request = Typhoeus::Request.new(@download_url + '/download/myfile', verbose: false, params: params, headers: headers)
+      request = Typhoeus::Request.new("#{@download_url}/download/myfile", verbose: false, params:,
+                                                                          headers:)
       request.on_headers do |response|
-        raise Transfertpro::Error.new("Directory #{current_path} does not exist on TransfertPro", response) unless response.success?
+        unless response.success?
+          raise Transfertpro::Error.new("Directory #{current_path} does not exist on TransfertPro",
+                                        response)
+        end
       end
       request.on_body do |chunk|
         outstream.write(chunk)
@@ -210,20 +229,22 @@ module Transfertpro
     end
 
     def find_dir(tp_dir, names)
-      directories = raw_lsr(tp_dir['DirectoryId'], names.count)['Directories']['$values']
-      current_path = "/#{tp_dir['DirectoryName']}"
+      directories = raw_lsr(tp_dir["DirectoryId"], names.count)["Directories"]["$values"]
+      current_path = "/#{tp_dir["DirectoryName"]}"
       names.each do |name|
         current_path += "/#{name}"
-        tp_dir = directories.find { |tp_dir| tp_dir['DirectoryName'] == name }
-        raise Transfertpro::Error.new("Directory #{current_path} does not exist on TransfertPro") if tp_dir.nil?
-        directories = tp_dir['Directories']['$values']
+        tp_dir = directories.find { |dir| dir["DirectoryName"] == name }
+        raise Transfertpro::Error, "Directory #{current_path} does not exist on TransfertPro" if tp_dir.nil?
+
+        directories = tp_dir["Directories"]["$values"]
       end
       tp_dir
     end
 
     def find_shared_root(root)
-      tp_dir = @shared_directories.find { |tp_dir| tp_dir['DirectoryName'] == root }
-      raise Transfertpro::Error.new("Directory #{current_path} does not exist on TransfertPro") if tp_dir.nil?
+      tp_dir = @shared_directories.find { |dir| dir["DirectoryName"] == root }
+      raise Transfertpro::Error, "Directory #{current_path} does not exist on TransfertPro" if tp_dir.nil?
+
       tp_dir
     end
 
@@ -238,13 +259,13 @@ module Transfertpro
     end
 
     def http_post(operation, body)
-      r = Typhoeus.post(@api_url + operation, body: body, params: authentication_parameters, verbose: false, headers:)
+      r = Typhoeus.post(@api_url + operation, body:, params: authentication_parameters, verbose: false, headers:)
       throw_error(r) unless r.success?
       r.body.empty? ? "" : JSON.parse(r.body)
     end
 
-    def throw_error(r)
-      raise Transfertpro::Error.new("Error calling transfertpro api", r)
+    def throw_error(response)
+      raise Transfertpro::Error.new("Error calling transfertpro api", response)
     end
   end
 end
