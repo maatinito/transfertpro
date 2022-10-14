@@ -2,19 +2,34 @@ name: Ruby
 
 on:
   push:
-    branches:
-      - master
-
+    branches: ['master', 'dev', 'feature/*']
   pull_request:
+    branches: ['master', 'dev', 'feature/*']
 
 jobs:
+  linters:
+    name: Linters
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: Run linters
+        run: |
+          bundle exec rubocop 
+
+
   build:
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         ruby:
-          - 2.7.3
+          - 3.0.4
 
     steps:
     - uses: actions/checkout@v2
