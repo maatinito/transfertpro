@@ -2,7 +2,7 @@ PATH
   remote: .
   specs:
     transfertpro (0.1.0)
-      typhoeus
+      typhoeus (~> 1.4.0)
 
 GEM
   remote: https://rubygems.org/
