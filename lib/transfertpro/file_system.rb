@@ -18,7 +18,7 @@ module Transfertpro
       r = []
       Dir.glob("#{source_directory}/#{pattern}").each do |filepath|
         upload_shared_file(filepath, tp_target_dir, move: )
-        r << File.dirname(filepath)
+        r << File.basename(filepath)
       end
       r
     end
@@ -142,7 +142,7 @@ module Transfertpro
 
     def direct_upload(input_file_path, file_description, share_id)
       file = File.open(input_file_path, "rb")
-      params = chunk_params(chunk, chunk_count, file_description, offset, share_id)
+      params = chunk_params(0, 1, file_description, 0, share_id)
       upload_chunk(params, file)
     end
 
@@ -282,7 +282,7 @@ module Transfertpro
 
     def find_shared_root(root)
       tp_dir = @shared_directories.find { |dir| dir["DirectoryName"] == root }
-      raise Transfertpro::Error, "Directory #{current_path} does not exist on TransfertPro" if tp_dir.nil?
+      raise Transfertpro::Error, "Directory #{root} does not exist on TransfertPro" if tp_dir.nil?
 
       tp_dir
     end
