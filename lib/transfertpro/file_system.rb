@@ -13,10 +13,10 @@ module Transfertpro
     # @param pattern String pattern used to find local files to upload
     # @param target_directory String target path on TransfertPro. Must be relative to 'Collaborative workspace'
     # @example upload_shared_files('./source', '*.txt', 'my_project/text')
-    def upload_shared_files(source_directory, pattern, target_directory)
+    def upload_shared_files(source_directory, pattern, target_directory, move: false)
       tp_target_dir = find_shared_dir(target_directory)
       Dir.glob("#{source_directory}/#{pattern}").each do |filepath|
-        upload_shared_file(filepath, tp_target_dir)
+        upload_shared_file(filepath, tp_target_dir, move)
       end
     end
 
@@ -24,7 +24,7 @@ module Transfertpro
     # @param input_file_path String path to local input file to upload
     # @param target_directory String target path on TransfertPro. Must be relative to 'Espace collaboratif'
     # @example: upload_shared_file('./source/file.txt', 'my_project/text')
-    def upload_shared_file(input_file_path, target_directory)
+    def upload_shared_file(input_file_path, target_directory, move: false)
       unless target_directory.is_a?(Hash) && !target_directory["DirectoryId"].nil?
         target_directory = find_shared_dir(target_directory.to_s)
       end
@@ -32,6 +32,7 @@ module Transfertpro
       share_id = target_directory["CurrentSharedDirectoryId"]
       upload_file_description(file_description, share_id)
       upload_content(input_file_path, file_description, share_id)
+      File.unlink(input_file_path) if move
     end
 
     # download files from a shared directory
@@ -39,11 +40,11 @@ module Transfertpro
     # @param pattern String pattern used to find remote files to download
     # @param target_directory local path where files must be downloaded
     # @example download_shared_files('my_project/text', '*.txt', './target')
-    def download_shared_files(source_directory, pattern, target_directory)
+    def download_shared_files(source_directory, pattern, target_directory, move: false)
       tp_dir = find_shared_dir(source_directory)
       tp_files = tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }
       tp_files.map do |tp_file|
-        download_file(target_directory, tp_dir, tp_file)
+        download_file(target_directory, tp_dir, tp_file, move)
       end
     end
 
@@ -51,14 +52,14 @@ module Transfertpro
     # @param input_file_path String TP file path relative to the shared root ('Espace collaboratif')
     # @param target_directory String local directory where to download the file
     # @example download_shared_file('my_project/text/file.txt', './target')
-    def download_shared_file(input_file_path, target_directory)
+    def download_shared_file(input_file_path, target_directory, move: false)
       directory = File.dirname(input_file_path)
       tp_dir = find_shared_dir(directory)
       filename = File.basename(input_file_path)
       tp_file = tp_dir["Files"]["$values"].find { |file| filename == file["FileName"] }
       raise Error, "Unable to find #{filename} in shared directory #{directory}" if tp_file.nil?
 
-      download_file(target_directory, tp_dir, tp_file)
+      download_file(target_directory, tp_dir, tp_file, move)
     end
 
     # list file names in a given directory
@@ -199,26 +200,34 @@ module Transfertpro
       r
     end
 
-    def download_file(target_directory, tp_dir, tp_file)
-      puts tp_file["FileName"]
-      target_file = "#{target_directory}/#{tp_file["FileName"]}"
-      out_stream = File.open target_file, "wb"
-      params = {
+    def download_file(target_directory, tp_dir, tp_file, move_file = false)
+      filename = tp_file["FileName"]
+      target_file = "#{target_directory}/#{filename}"
+      out_stream = Tempfile.new('tp', target_directory)
+      out_stream.binmode
+      run_download_request(out_stream, download_params(tp_dir, tp_file))
+      out_stream.close
+      FileUtils.mv(out_stream.path, target_file)
+      delete_file(tp_dir, tp_file) if move_file
+      target_file
+    rescue StandardError => e
+      out_stream&.close!
+      raise "Unable to download #{filename}: #{e.message}"
+    end
+
+    def download_params(tp_dir, tp_file)
+      {
         i: tp_file["Id"],
         n: tp_file["FileName"],
         s: tp_dir["CurrentSharedDirectoryId"]
       }.merge(authentication_parameters)
-      run_download_request(out_stream, params)
-      target_file
     end
 
     def run_download_request(outstream, params)
-      request = Typhoeus::Request.new("#{@download_url}/download/myfile", verbose: false, params:,
-                                                                          headers:)
+      request = Typhoeus::Request.new("#{@download_url}/download/myfile", params:, headers:)
       request.on_headers do |response|
         unless response.success?
-          raise Transfertpro::Error.new("Directory #{current_path} does not exist on TransfertPro",
-                                        response)
+          raise Transfertpro::Error.new("File #{params[:n]} does not exist on TransfertPro", response)
         end
       end
       request.on_body do |chunk|
@@ -226,6 +235,20 @@ module Transfertpro
       end
       request.on_complete { outstream.close }
       request.run
+    end
+
+    def delete_file(tp_dir, tp_file)
+      operation = "/api/v5/File/#{tp_file["Id"]}"
+      shared_id = tp_dir['CurrentSharedDirectoryId']
+      operation += "/share/#{shared_id}" unless shared_id.nil?
+      http_delete(operation)
+    end
+
+    def http_delete(operation)
+      r = Typhoeus.delete(@api_url + operation, params: authentication_parameters, verbose: false, headers:)
+      puts "delete #{operation}: #{r.time * 1000.ceil}ms"
+      raise_error(r) unless r.success?
+      r.success?
     end
 
     def find_dir(tp_dir, names)
@@ -248,23 +271,22 @@ module Transfertpro
       tp_dir
     end
 
-    def shared(path) end
-
     def http_get(operation)
       r = Typhoeus.get(@api_url + operation, params: authentication_parameters, verbose: false, headers:)
-      puts "#{operation}: #{r.time * 1000.ceil}ms"
-      throw_error(r) unless r.success?
+      puts "get #{operation}: #{r.time * 1000.ceil}ms"
+      raise_error(r) unless r.success?
 
       JSON.parse(r.body)
     end
 
     def http_post(operation, body)
       r = Typhoeus.post(@api_url + operation, body:, params: authentication_parameters, verbose: false, headers:)
-      throw_error(r) unless r.success?
+      puts "post #{operation}: #{r.time * 1000.ceil}ms"
+      raise_error(r) unless r.success?
       r.body.empty? ? "" : JSON.parse(r.body)
     end
 
-    def throw_error(response)
+    def raise_error(response)
       raise Transfertpro::Error.new("Error calling transfertpro api", response)
     end
   end
