@@ -15,9 +15,12 @@ module Transfertpro
     # @example upload_shared_files('./source', '*.txt', 'my_project/text')
     def upload_shared_files(source_directory, pattern, target_directory, move: false)
       tp_target_dir = find_shared_dir(target_directory)
+      r = []
       Dir.glob("#{source_directory}/#{pattern}").each do |filepath|
-        upload_shared_file(filepath, tp_target_dir, move)
+        upload_shared_file(filepath, tp_target_dir, move: )
+        r << File.dirname(filepath)
       end
+      r
     end
 
     # upload a file to a TP shared directory
@@ -46,6 +49,7 @@ module Transfertpro
       tp_files.map do |tp_file|
         download_file(target_directory, tp_dir, tp_file, move)
       end
+      to_filenames(tp_files)
     end
 
     # download file from a shared directory
@@ -58,7 +62,6 @@ module Transfertpro
       filename = File.basename(input_file_path)
       tp_file = tp_dir["Files"]["$values"].find { |file| filename == file["FileName"] }
       raise Error, "Unable to find #{filename} in shared directory #{directory}" if tp_file.nil?
-
       download_file(target_directory, tp_dir, tp_file, move)
     end
 
@@ -72,11 +75,24 @@ module Transfertpro
       root = names.shift
       tp_dir = find_shared_root(root)
       tp_dir = find_dir(tp_dir, names) unless names.empty?
-      files = tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }
-      [files, tp_dir]
+      tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }.map { |f| f["FileName"] }
+    end
+
+    # delete files
+    def delete_shared_files(directory, pattern = "*")
+      tp_dir = find_shared_dir(directory)
+      tp_files = tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }
+      tp_files.map do |tp_file|
+        delete_file(tp_dir, tp_file)
+      end
+      to_filenames(tp_files)
     end
 
     private
+
+    def to_filenames(tp_files)
+      tp_files.map { |f| f["FileName"] }
+    end
 
     def find_shared_dir(directory)
       names = path_names(directory)
@@ -203,7 +219,7 @@ module Transfertpro
     def download_file(target_directory, tp_dir, tp_file, move_file = false)
       filename = tp_file["FileName"]
       target_file = "#{target_directory}/#{filename}"
-      out_stream = Tempfile.new('tp', target_directory)
+      out_stream = Tempfile.new("tp", target_directory)
       out_stream.binmode
       run_download_request(out_stream, download_params(tp_dir, tp_file))
       out_stream.close
@@ -239,7 +255,7 @@ module Transfertpro
 
     def delete_file(tp_dir, tp_file)
       operation = "/api/v5/File/#{tp_file["Id"]}"
-      shared_id = tp_dir['CurrentSharedDirectoryId']
+      shared_id = tp_dir["CurrentSharedDirectoryId"]
       operation += "/share/#{shared_id}" unless shared_id.nil?
       http_delete(operation)
     end
