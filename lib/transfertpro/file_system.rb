@@ -14,10 +14,60 @@ module Transfertpro
     # @param target_directory String target path on TransfertPro. Must be relative to 'Collaborative workspace'
     # @example upload_shared_files('./source', '*.txt', 'my_project/text')
     def upload_shared_files(source_directory, pattern, target_directory, move: false)
-      tp_target_dir = find_shared_dir(target_directory)
+      upload_files(source_directory, pattern, ":Share/#{target_directory}", move:)
+    end
+
+    # upload a file to a TP shared directory
+    # @param input_file_path String path to local input file to upload
+    # @param target_directory String target path on TransfertPro. Must be relative to 'Espace collaboratif'
+    # @example: upload_shared_file('./source/file.txt', 'my_project/text')
+    def upload_shared_file(input_file_path, target_directory, move: false)
+      upload_file(input_file_path, ":Share/#{target_directory}", move:)
+    end
+
+    # download files from a shared directory
+    # @param source_directory String Source path on TransfertPro. Must be relative to 'Espace collaboratif'
+    # @param pattern String pattern used to find remote files to download
+    # @param target_directory local path where files must be downloaded
+    # @example download_shared_files('my_project/text', '*.txt', './target')
+    def download_shared_files(source_directory, pattern, target_directory, move: false)
+      download_files(":Share/#{source_directory}", pattern, target_directory, move:)
+    end
+
+    # download file from a shared directory
+    # @param input_file_path String TP file path relative to the shared root ('Espace collaboratif')
+    # @param target_directory String local directory where to download the file
+    # @example download_shared_file('my_project/text/file.txt', './target')
+    def download_shared_file(input_file_path, target_directory, move: false)
+      download_file(":Share/#{input_file_path}", target_directory, move:)
+    end
+
+    # list file names in a given directory
+    # @param directory relative to shared root ('Espace collaboratif')
+    # @param pattern String file pattern to match for
+    # @example list_shared_files('my_project/text', '*.txt')
+    # @return Array<String> file paths relative to shared root
+    def list_shared_files(directory, pattern = "*")
+      list_files(":Share/#{directory}")
+    end
+
+    # delete files
+    def delete_shared_files(directory, pattern = "*")
+      delete_files(":Share/#{directory}", pattern)
+    end
+
+    #----------------- generic versions
+
+    # upload local files to a TP shared directory
+    # @param source_directory String local path
+    # @param pattern String pattern used to find local files to upload
+    # @param target_directory String target path on TransfertPro. Must be relative to 'Collaborative workspace'
+    # @example upload_shared_files('./source', '*.txt', 'my_project/text')
+    def upload_files(source_directory, pattern, target_directory, move: false)
+      tp_target_dir = find_dir(target_directory)
       r = []
       Dir.glob("#{source_directory}/#{pattern}").each do |filepath|
-        upload_shared_file(filepath, tp_target_dir, move: )
+        upload_file(filepath, tp_target_dir, move:)
         r << File.basename(filepath)
       end
       r
@@ -27,9 +77,9 @@ module Transfertpro
     # @param input_file_path String path to local input file to upload
     # @param target_directory String target path on TransfertPro. Must be relative to 'Espace collaboratif'
     # @example: upload_shared_file('./source/file.txt', 'my_project/text')
-    def upload_shared_file(input_file_path, target_directory, move: false)
+    def upload_file(input_file_path, target_directory, move: false)
       unless target_directory.is_a?(Hash) && !target_directory["DirectoryId"].nil?
-        target_directory = find_shared_dir(target_directory.to_s)
+        target_directory = find_dir(target_directory.to_s)
       end
       file_description = file_description(input_file_path, target_directory)
       share_id = target_directory["CurrentSharedDirectoryId"]
@@ -43,11 +93,11 @@ module Transfertpro
     # @param pattern String pattern used to find remote files to download
     # @param target_directory local path where files must be downloaded
     # @example download_shared_files('my_project/text', '*.txt', './target')
-    def download_shared_files(source_directory, pattern, target_directory, move: false)
-      tp_dir = find_shared_dir(source_directory)
+    def download_files(source_directory, pattern, target_directory, move: false)
+      tp_dir = find_dir(source_directory)
       tp_files = tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }
       tp_files.map do |tp_file|
-        download_file(target_directory, tp_dir, tp_file, move)
+        download_tp_file(target_directory, tp_dir, tp_file, move)
       end
       to_filenames(tp_files)
     end
@@ -56,31 +106,28 @@ module Transfertpro
     # @param input_file_path String TP file path relative to the shared root ('Espace collaboratif')
     # @param target_directory String local directory where to download the file
     # @example download_shared_file('my_project/text/file.txt', './target')
-    def download_shared_file(input_file_path, target_directory, move: false)
+    def download_file(input_file_path, target_directory, move: false)
       directory = File.dirname(input_file_path)
-      tp_dir = find_shared_dir(directory)
+      tp_dir = find_dir(directory)
       filename = File.basename(input_file_path)
       tp_file = tp_dir["Files"]["$values"].find { |file| filename == file["FileName"] }
-      raise Error, "Unable to find #{filename} in shared directory #{directory}" if tp_file.nil?
-      download_file(target_directory, tp_dir, tp_file, move)
+      raise Error, "Unable to find #{filename} in directory #{directory}" if tp_file.nil?
+
+      download_tp_file(target_directory, tp_dir, tp_file, move)
     end
 
     # list file names in a given directory
-    # @param tp shared directory relative to shared root ('Espace collaboratif')
+    # @param directory path relative to choosen root ('Shared' or "MyFiles")
     # @param pattern String file pattern to match for
     # @example list_shared_files('my_project/text', '*.txt')
     # @return Array<String> file paths relative to shared root
-    def list_shared_files(directory, pattern = "*")
-      names = path_names(directory)
-      root = names.shift
-      tp_dir = find_shared_root(root)
-      tp_dir = find_dir(tp_dir, names) unless names.empty?
+    def list_files(directory, pattern = "*")
+      tp_dir = find_dir(directory)
       tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }.map { |f| f["FileName"] }
     end
 
-    # delete files
-    def delete_shared_files(directory, pattern = "*")
-      tp_dir = find_shared_dir(directory)
+    def delete_files(directory, pattern = "*")
+      tp_dir = find_dir(directory)
       tp_files = tp_dir["Files"]["$values"].filter { |file| File.fnmatch(pattern, file["FileName"]) }
       tp_files.map do |tp_file|
         delete_file(tp_dir, tp_file)
@@ -94,11 +141,42 @@ module Transfertpro
       tp_files.map { |f| f["FileName"] }
     end
 
-    def find_shared_dir(directory)
+    def find_dir(directory)
       names = path_names(directory)
       root = names.shift
-      tp_dir = find_shared_root(root)
-      find_dir(tp_dir, names) unless names.empty?
+      tp_dir = find_root(root)
+      names.empty? ? tp_dir : find_tp_dir(tp_dir, names)
+    end
+
+    def find_tp_dir(tp_dir, names)
+      tp_dir = @directories[tp_dir["DirectoryId"]] ||= raw_ls(tp_dir["DirectoryId"])
+      current_path = "/#{tp_dir["DirectoryName"]}"
+      name = names.shift
+      return tp_dir unless name
+
+      current_path += "/#{name}"
+      tp_dir = find_sub_dir(tp_dir, name, current_path)
+
+      tp_dir = raw_lsr(tp_dir["DirectoryId"], names.count)
+      names.each do |name|
+        current_path += "/#{name}"
+        tp_dir = find_sub_dir(tp_dir, name, current_path)
+      end
+
+      tp_dir
+    end
+
+    def find_sub_dir(tp_dir, name, current_path)
+      r = tp_dir["Directories"]["$values"].find { |dir| dir["DirectoryName"] == name }
+      raise Transfertpro::Error, "Directory #{current_path} does not exist on TransfertPro" if r.nil?
+      r
+    end
+
+    def find_root(root)
+      tp_dir = @root_directories.find { |d| d["DirectoryName"] == root }
+      raise Transfertpro::Error, "Root #{root} does not exist" if tp_dir.nil?
+
+      tp_dir
     end
 
     def raw_root
@@ -118,9 +196,8 @@ module Transfertpro
     end
 
     def refresh
-      @roots_directories = raw_root["Directories"]["$values"]
-      share_root_id = @roots_directories.find { |d| d["DirectoryName"] == ":Share" }["DirectoryId"]
-      @shared_directories = raw_ls(share_root_id)["Directories"]["$values"]
+      @root_directories = raw_root["Directories"]["$values"]
+      @directories = {}
     end
 
     def file_description(input_file_path, tp_dir)
@@ -207,7 +284,8 @@ module Transfertpro
     end
 
     def upload_file_description(file_description, share_id)
-      http_post("/api/v5/File/share/#{share_id}", file_description)
+      share = NIL_GUID == share_id ? "" : "/share/#{share_id}"
+      http_post("/api/v5/File#{share}", file_description)
     end
 
     def reconnect
@@ -216,7 +294,7 @@ module Transfertpro
       r
     end
 
-    def download_file(target_directory, tp_dir, tp_file, move_file = false)
+    def download_tp_file(target_directory, tp_dir, tp_file, move_file = false)
       filename = tp_file["FileName"]
       target_file = "#{target_directory}/#{filename}"
       out_stream = Tempfile.new("tp", target_directory)
@@ -228,22 +306,26 @@ module Transfertpro
       target_file
     rescue StandardError => e
       out_stream&.close!
-      raise "Unable to download #{filename}: #{e.message}"
+      raise Transfertpro::Error, "Unable to download #{filename}: #{e.message}"
     end
+
+    NIL_GUID = "00000000-0000-0000-0000-000000000000"
 
     def download_params(tp_dir, tp_file)
       {
         i: tp_file["Id"],
         n: tp_file["FileName"],
-        s: tp_dir["CurrentSharedDirectoryId"]
-      }.merge(authentication_parameters)
+      }.tap do |h|
+        shareId = tp_dir["CurrentSharedDirectoryId"]
+        h[:s] = shareId if shareId != NIL_GUID
+      end.merge(authentication_parameters)
     end
 
     def run_download_request(outstream, params)
       request = Typhoeus::Request.new("#{@download_url}/download/myfile", params:, headers:)
       request.on_headers do |response|
         unless response.success?
-          raise Transfertpro::Error.new("File #{params[:n]} does not exist on TransfertPro", response)
+          raise Transfertpro::Error, "Error #{response.code} when downloading #{params[:n]} (#{response.body}"
         end
       end
       request.on_body do |chunk|
@@ -256,40 +338,20 @@ module Transfertpro
     def delete_file(tp_dir, tp_file)
       operation = "/api/v5/File/#{tp_file["Id"]}"
       shared_id = tp_dir["CurrentSharedDirectoryId"]
-      operation += "/share/#{shared_id}" unless shared_id.nil?
+      operation += "/share/#{shared_id}" unless shared_id.nil? # || shared_id == NIL_GUID commented as triggers crash on TP
       http_delete(operation)
     end
 
     def http_delete(operation)
       r = Typhoeus.delete(@api_url + operation, params: authentication_parameters, verbose: false, headers:)
-      puts "delete #{operation}: #{r.time * 1000.ceil}ms"
+      puts "delete #{operation}: #{(r.time * 1000).round}ms"
       raise_error(r) unless r.success?
       r.success?
     end
 
-    def find_dir(tp_dir, names)
-      directories = raw_lsr(tp_dir["DirectoryId"], names.count)["Directories"]["$values"]
-      current_path = "/#{tp_dir["DirectoryName"]}"
-      names.each do |name|
-        current_path += "/#{name}"
-        tp_dir = directories.find { |dir| dir["DirectoryName"] == name }
-        raise Transfertpro::Error, "Directory #{current_path} does not exist on TransfertPro" if tp_dir.nil?
-
-        directories = tp_dir["Directories"]["$values"]
-      end
-      tp_dir
-    end
-
-    def find_shared_root(root)
-      tp_dir = @shared_directories.find { |dir| dir["DirectoryName"] == root }
-      raise Transfertpro::Error, "Directory #{root} does not exist on TransfertPro" if tp_dir.nil?
-
-      tp_dir
-    end
-
     def http_get(operation)
       r = Typhoeus.get(@api_url + operation, params: authentication_parameters, verbose: false, headers:)
-      puts "get #{operation}: #{r.time * 1000.ceil}ms"
+      puts "get #{operation}: #{(r.time * 1000).round}ms"
       raise_error(r) unless r.success?
 
       JSON.parse(r.body)
@@ -297,12 +359,13 @@ module Transfertpro
 
     def http_post(operation, body)
       r = Typhoeus.post(@api_url + operation, body:, params: authentication_parameters, verbose: false, headers:)
-      puts "post #{operation}: #{r.time * 1000.ceil}ms"
+      puts "post #{operation}: #{(r.time * 1000).round}ms"
       raise_error(r) unless r.success?
       r.body.empty? ? "" : JSON.parse(r.body)
     end
 
     def raise_error(response)
+      pp response
       raise Transfertpro::Error.new("Error calling transfertpro api", response)
     end
   end

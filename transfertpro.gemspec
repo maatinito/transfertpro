@@ -4,7 +4,7 @@ require_relative "lib/transfertpro/version"
 
 Gem::Specification.new do |spec|
   spec.name = "transfertpro"
-  spec.version = "0.1.0"
+  spec.version = "0.2.0"
   spec.authors = ["Christian Lautier"]
   spec.email = ["clpublic@free.fr"]
 
@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
     This gem allows basic file operations on TransfertPro;
     TransfertPro REST API is very close to their implementation (shared id, no path, ...)
     This API tries to implement higher level of functionalities to be able to send/receive files
-    using simple file system concepts likepath, wildcards (*.txt).
+    using simple file system concepts like paths & wildcards (*.txt).
   DOC
   spec.homepage = "https://www.githib.com/maatinito/transfertpro/README.MD"
   spec.license = "MIT"
