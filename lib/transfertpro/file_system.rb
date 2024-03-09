@@ -232,7 +232,7 @@ module Transfertpro
       loop do
         Tempfile.create(["tp", extension], binmode: true) do |chunk_file|
           chunk = create_chunk(chunk_file, file)
-          params = chunk_params(chunk, chunk_count, file_description, offset, share_id)
+          params = chunk_params(chunk_index, chunk_count, file_description, offset, share_id)
           upload_chunk(params, chunk_file)
           offset += chunk.size
           chunk_index += 1
